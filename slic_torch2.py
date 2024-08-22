@@ -222,6 +222,7 @@ class SLICProcessor(torch.nn.Module):
         normalized_X_nearest_clusters = unflatten(normalized_X_nearest_clusters) 
         #Y_nearest_clusters = torch.permute(Y_nearest_clusters.view(concat_features.shape[0],concat_features.shape[2],concat_features.shape[3],1),(0,3,1,2))
         #X_nearest_clusters = torch.permute(X_nearest_clusters.view(concat_features.shape[0],concat_features.shape[2],concat_features.shape[3],1),(0,3,1,2))
+        p46()
         Ymin = (self.Y - 2*self.S).clamp(0,None)
         Ymax = (self.Y + 2*self.S).clamp(None,self.image_height)
 
@@ -305,11 +306,19 @@ class SLICProcessor(torch.nn.Module):
             #------------------------------------------------------
             cluster_y,cluster_x = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]),(self.image_width-1)* (cluster[1]*self.norm_spat_std[1])
 
-            top = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]) - 2 * self.S
-            bottom = (self.image_height-1)* (cluster[0] *self.norm_spat_std[0]) + 2 * self.S
-            left = (self.image_width-1)* (cluster[1] *self.norm_spat_std[1])- 2 * self.S
-            right = (self.image_width-1)* (cluster[1]*self.norm_spat_std[1]) + 2 * self.S
+            #TODO: should this not be self.S//2
+            #...................................
+            #half_window_height = 2 * self.S
+            #half_window_width = 2 * self.S
+            half_window_height =  self.S/2
+            half_window_width = self.S/2
+            #...................................
+            top = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]) - half_window_height
+            bottom = (self.image_height-1)* (cluster[0] *self.norm_spat_std[0]) + half_window_height
+            left = (self.image_width-1)* (cluster[1] *self.norm_spat_std[1])- half_window_width
+            right = (self.image_width-1)* (cluster[1]*self.norm_spat_std[1]) + half_window_width
             top = max( top,0)
+            #TODO: image_height - 1?
             bottom = min(bottom,self.image_height)
             left = max(left,0)
             right = min(right,self.image_width)
