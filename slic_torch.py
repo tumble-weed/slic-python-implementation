@@ -23,7 +23,6 @@ class SLICProcessor(torch.nn.Module):
         feats = feats.to(device)
         im_t = im_t.to(device)
         self.debug = debug
-        self.debug = os.environ.get('DBG_SLIC',self.debug)
         #Y,X = torch.meshgrid(
         #    torch.arange(feats.shape[-2]),
         #    torch.arange(feats.shape[-1]))
@@ -154,12 +153,6 @@ class SLICProcessor(torch.nn.Module):
         normalized_data = self.data/self.norm_feat_std[None,:,None,None]
         normalized_X = self.X/self.norm_spat_std[None,1:2,None,None]
         normalized_Y = self.Y/self.norm_spat_std[None,0:1,None,None]
-        if False:
-            print('check if the std is the same')
-            get_std_of_1_channel(normalized_X,W)
-            get_std_of_1_channel(normalized_Y,W)
-            get_std_of_1_channel(normalized_data[:,:1],W)
-            get_std_of_1_channel(normalized_data[:,1:2],W)
         #p46()
         for name in ['clusters','clusters_for_visualize','normalized_data','normalized_Y','normalized_X']:
             self.register_buffer(name,locals()[name])
@@ -223,7 +216,6 @@ class SLICProcessor(torch.nn.Module):
         normalized_X_nearest_clusters = unflatten(normalized_X_nearest_clusters) 
         #Y_nearest_clusters = torch.permute(Y_nearest_clusters.view(concat_features.shape[0],concat_features.shape[2],concat_features.shape[3],1),(0,3,1,2))
         #X_nearest_clusters = torch.permute(X_nearest_clusters.view(concat_features.shape[0],concat_features.shape[2],concat_features.shape[3],1),(0,3,1,2))
-        p46()
         Ymin = (self.Y - 2*self.S).clamp(0,None)
         Ymax = (self.Y + 2*self.S).clamp(None,self.image_height)
 
@@ -307,57 +299,39 @@ class SLICProcessor(torch.nn.Module):
             #------------------------------------------------------
             cluster_y,cluster_x = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]),(self.image_width-1)* (cluster[1]*self.norm_spat_std[1])
 
-            #TODO: should this not be self.S//2
-            #...................................
-            #half_window_height = 2 * self.S
-            #half_window_width = 2 * self.S
-            half_window_height =  self.S/2
-            half_window_width = self.S/2
-            #...................................
-            top = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]) - half_window_height
-            bottom = (self.image_height-1)* (cluster[0] *self.norm_spat_std[0]) + half_window_height
-            left = (self.image_width-1)* (cluster[1] *self.norm_spat_std[1])- half_window_width
-            right = (self.image_width-1)* (cluster[1]*self.norm_spat_std[1]) + half_window_width
+            top = (self.image_height-1)* (cluster[0]*self.norm_spat_std[0]) - 2 * self.S
+            bottom = (self.image_height-1)* (cluster[0] *self.norm_spat_std[0]) + 2 * self.S
+            left = (self.image_width-1)* (cluster[1] *self.norm_spat_std[1])- 2 * self.S
+            right = (self.image_width-1)* (cluster[1]*self.norm_spat_std[1]) + 2 * self.S
             top = max( top,0)
-            #TODO: image_height - 1?
             bottom = min(bottom,self.image_height)
             left = max(left,0)
             right = min(right,self.image_width)
-            top = int(top)
-            bottom = int(bottom)
-            left = int(left)
-            right = int(right)
-            window_of_normalized_data = self.normalized_data[:,:,top:bottom,left:right]
-            window_of_normalized_Y = self.normalized_Y[:,:,top:bottom,left:right]
-            window_of_normalized_X = self.normalized_X[:,:,top:bottom,left:right]
-            window_of_new_dis = new_dis[:,:,top:bottom,left:right]
             #------------------------------------------------------
-            #mask = torch.zeros_like(new_dis)
-            #mask[:,:,int(top):int(bottom),int(left):int(right)] = 1
+            mask = torch.zeros_like(new_dis)
+            mask[:,:,int(top):int(bottom),int(left):int(right)] = 1
             cluster_feats = cluster[2:]
             cluster_spat = cluster[:2]
 
             fbatch = 64
-            Dc2_normalized = torch.zeros_like(window_of_normalized_data)
+            Dc2_normalized = torch.zeros_like(self.data)
             for bi in range((self.data.shape[1] + fbatch - 1) // fbatch):
-                Dc2_normalized[:,bi*fbatch:(bi+1)*fbatch] = ((window_of_normalized_data[:,bi*fbatch:(bi+1)*fbatch] - cluster_feats[bi*fbatch: (bi+1)*fbatch][None,:,None,None])**2)
+                Dc2_normalized[:,bi*fbatch:(bi+1)*fbatch] = ((self.normalized_data[:,bi*fbatch:(bi+1)*fbatch] - cluster_feats[bi*fbatch: (bi+1)*fbatch][None,:,None,None])**2)
             Ds2_normalized = torch.cat([
-                (window_of_normalized_Y - cluster_spat[0])**2,
-                (window_of_normalized_X - cluster_spat[1])**2],dim=1)
+                (self.normalized_Y - cluster_spat[0])**2,
+                (self.normalized_X - cluster_spat[1])**2],dim=1)
 
-            #c_weight = 10 
-            #s_weight = 1 #float('inf')
             D = torch.sqrt(
                 Dc2_normalized.sum(dim=1,keepdim=True)/self.c_weight + 
                 Ds2_normalized.sum(dim=1,keepdim=True)/self.s_weight
             )
-            #D[(1-mask).bool()] = float('inf')
-            where_update = D < window_of_new_dis
-            new_label[:,:,top:bottom,left:right][where_update] = cluster_ix
-            new_dis[:,:,top:bottom,left:right][where_update] = D[where_update]
+            D[(1-mask).bool()] = float('inf')
+            where_update = D < new_dis
+            new_label[where_update] = cluster_ix
+            new_dis[where_update] = D[where_update]
             if True:
-                new_dis_spat[:,:,top:bottom,left:right][where_update] = Ds2_normalized.sum(dim=1,keepdim=True)[where_update]
-                new_dis_feat[:,:,top:bottom,left:right][where_update] = Dc2_normalized.sum(dim=1,keepdim=True)[where_update]
+                new_dis_spat[where_update] = Ds2_normalized.sum(dim=1,keepdim=True)[where_update]
+                new_dis_feat[where_update] = Dc2_normalized.sum(dim=1,keepdim=True)[where_update]
                 #if not (new_label == cluster_ix).sum() >= 1:
                 #    p46()
            
@@ -411,7 +385,7 @@ class SLICProcessor(torch.nn.Module):
 
         if self.clusters_for_visualize.isnan().any():
             p46()
-    def save_current_image(self, name, i):
+    def save_current_image(self, name):
         name2 = os.path.splitext(name)[0] + '2.png'
         image_arr = torch.zeros_like(self.im_t)
         image_arr2 = torch.zeros_like(self.im_t)
@@ -429,29 +403,11 @@ class SLICProcessor(torch.nn.Module):
             image_arr2[:,:1][in_cluster] = rand_val
             image_arr2[:,1:2][in_cluster] = rand_val
             image_arr2[:,2:3][in_cluster] = rand_val
-        #-----------------------------------
-        '''
         image_arr = tensor_to_numpy(image_arr.permute(0,2,3,1))
         image_arr2 = tensor_to_numpy(image_arr2.permute(0,2,3,1))
         image_arr = image_arr[0]
         image_arr2 = image_arr2[0]
         return save_lab_image(name, image_arr),save_lab_image(name2,image_arr2)
-        '''
-        #-----------------------------------
-        try:
-            dutils.img_save(image_arr,os.path.realpath(name),use_matplotlib=False)
-            dutils.img_save(image_arr2,os.path.realpath(name2),use_matplotlib=False)
-        except Exception as e:
-            print(e)
-            p46()
-        #p46()
-        name_parts = os.path.split(name)
-        labels_path = os.path.join(*name_parts[:-1],f'labels_{i}.png')
-        dutils.img_save(self.label,labels_path,use_matplotlib=False)
-        dis_path = os.path.join(*name_parts[:-1],f'dis_{i}.png')
-        dutils.img_save(self.dis,dis_path,use_matplotlib=False)
-        p46()
-        return os.path.realpath(name),os.path.realpath(name2)
 
     def iterate_10times(self):
         #self.init_clusters()
@@ -464,7 +420,7 @@ class SLICProcessor(torch.nn.Module):
             name = f'torch_results/{get_savename("lenna",i)}.png'
             #p46()
             if self.debug:
-                saved_path,saved_path2 = self.save_current_image(name,i)
+                saved_path,saved_path2 = self.save_current_image(name)
                 #p46()
                 wandb.log(dict(
                     approx_image=wandb.Image(saved_path,caption="approx_image"), 
@@ -493,22 +449,18 @@ def save_lab_image(path, lab_arr):
     :param lab_arr:
     :return:
     """
-    p46()
-   
+    #p46()
     rgb_arr = color.lab2rgb(lab_arr)
     d = os.path.dirname(path)
     os.makedirs(d,exist_ok=True)
     io.imsave(path, rgb_arr)
-    path = os.path.realpath(path)
-    print(path)
     return path
 
 
 if __name__ == '__main__':
     #im = open_image('Lenna.png')
     device = 'cuda'
-    #path = 'Lenna.png'
-    path = os.path.join(os.environ['IMAGENETIMAGESDIR'],'ILSVRC2012_val_00000001.JPEG')
+    path = 'Lenna.png'
     im = io.imread(path)
     im = color.rgb2lab(im)
     im_t = torch.tensor(im).permute(2,0,1)[None].float()
